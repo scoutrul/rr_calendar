@@ -1,104 +1,104 @@
 <template>
-  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 w-full max-w-sm mx-auto font-sans">
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-4">
-      <button 
-        @click="previousMonth" 
-        type="button" 
-        class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <svg class="w-6 h-6 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
-        </svg>
-      </button>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100 w-32 text-center">
-        {{ monthYearLabel }}
-      </h2>
-      <button 
-        @click="nextMonth" 
-        type="button" 
-        class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <svg class="w-6 h-6 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-        </svg>
-      </button>
-    </div>
+  <div 
+    class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 w-full max-w-sm mx-auto font-sans"
+    role="application"
+    :aria-label="calendarLabel"
+    aria-live="polite"
+    @keydown="handleKeydown"
+    tabindex="0">
+    <CalendarHeader
+      :month-year-label="monthYearLabel"
+      :previous-month-label="previousMonthLabel"
+      :next-month-label="nextMonthLabel"
+      @previous="previousMonth"
+      @next="nextMonth"
+    />
   
     <!-- Calendar Grid -->
-    <div class="grid grid-cols-7 gap-1 text-center">
+    <div class="grid grid-cols-7 gap-1 text-center" role="grid" :aria-label="calendarGridLabel">
       <!-- Days of week -->
       <div 
         v-for="day in daysOfWeek" 
         :key="day" 
-        class="text-xs font-medium text-gray-500 dark:text-gray-400 py-2">
+        class="text-xs font-medium text-gray-500 dark:text-gray-400 py-2"
+        role="columnheader">
         {{ day }}
       </div>
-  
+
       <!-- Calendar days -->
-      <div 
+      <CalendarDay
         v-for="day in calendarGrid" 
-        :key="day.date.getTime()"
-        @click="selectDate(day)"
-        :class="[
-          'flex items-center justify-center w-10 h-10 rounded-full cursor-pointer transition-colors',
-          {
-            'text-gray-400 dark:text-gray-500': !day.isCurrentMonth,
-            'text-gray-800 dark:text-gray-200': day.isCurrentMonth && !day.isSelected,
-            'bg-blue-600 text-white font-bold': day.isSelected,
-            'hover:bg-gray-100 dark:hover:bg-gray-700': !day.isSelected,
-            'ring-2 ring-blue-500': day.isToday && !day.isSelected
-          }
-        ]">
-        {{ day.dayOfMonth }}
-      </div>
+        :key="`${day.date.getTime()}-${day.isSelected}`"
+        :day="day"
+        @select="selectDate"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
-import { useLocalization, type Language } from '../../composables/useLocalization';
+import { useLocalization } from '../../composables/useLocalization';
+import type { Language, CalendarProps } from '../../types/calendar';
+import { parseDate, normalizeDate } from '../../utils/dateUtils';
+import { generateCalendarGrid } from '../../utils/calendarGrid';
+import CalendarHeader from './CalendarHeader.vue';
+import CalendarDay from './CalendarDay.vue';
 
-interface CalendarDay {
-  date: Date;
-  dayOfMonth: number;
-  isCurrentMonth: boolean;
-  isToday: boolean;
-  isSelected: boolean;
-}
-
-interface Props {
-  initialDate?: string; // YYYY-MM-DD format
-  language?: 'en' | 'ru';
-}
-
-const props = withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<CalendarProps>(), {
   initialDate: undefined,
-  language: 'ru'
+  language: 'ru',
+  minDate: undefined,
+  maxDate: undefined,
+  disabledDates: undefined,
 });
 
-const emit = defineEmits(['dateSelected']);
+const emit = defineEmits<{
+  dateSelected: [date: Date];
+  error: [error: Error];
+}>();
 
 const { currentLanguage, translations } = useLocalization();
 const displayedDate = ref<Date>(new Date());
 const selectedDate = ref<Date | null>(null);
+const error = ref<Error | null>(null);
 
 // Синхронизация языка из props с локализацией
 if (props.language) {
   currentLanguage.value = props.language;
 }
 
-// Инициализация даты
+// Парсинг дат ограничений
+const minDateParsed = computed(() => {
+  if (!props.minDate) return null;
+  return parseDate(props.minDate);
+});
+
+const maxDateParsed = computed(() => {
+  if (!props.maxDate) return null;
+  return parseDate(props.maxDate);
+});
+
+// Инициализация даты с обработкой ошибок
 const initializeDate = () => {
-  if (props.initialDate) {
-    const parts = props.initialDate.split('-').map((p: string) => parseInt(p, 10));
-    const date = new Date(parts[0], parts[1] - 1, parts[2]);
-    if (!isNaN(date.getTime())) {
+  try {
+    error.value = null;
+    const lang = currentLanguage.value as Language;
+    
+    if (props.initialDate) {
+      const date = parseDate(props.initialDate);
+      if (!date) {
+        throw new Error(translations[lang].errorInvalidInitialDate);
+      }
       displayedDate.value = date;
-      selectedDate.value = date;
+      selectedDate.value = normalizeDate(date);
     } else {
       useCurrentDate();
     }
-  } else {
+  } catch (err) {
+    const lang = currentLanguage.value as Language;
+    error.value = err instanceof Error ? err : new Error(translations[lang].errorFailedToInitialize);
+    emit('error', error.value);
     useCurrentDate();
   }
 };
@@ -106,7 +106,7 @@ const initializeDate = () => {
 const useCurrentDate = () => {
   const today = new Date();
   displayedDate.value = today;
-  selectedDate.value = today;
+  selectedDate.value = normalizeDate(today);
 };
 
 const monthYearLabel = computed(() => {
@@ -121,63 +121,21 @@ const daysOfWeek = computed(() => {
   return translations[lang].daysOfWeekShort;
 });
 
-const calendarGrid = computed<CalendarDay[]>(() => {
+// Мемоизация для оптимизации производительности
+const calendarGrid = computed(() => {
   const date = displayedDate.value;
   const year = date.getFullYear();
   const month = date.getMonth();
 
-  const firstDayOfMonth = new Date(year, month, 1);
-  const lastDayOfMonth = new Date(year, month + 1, 0);
-  const daysInMonth = lastDayOfMonth.getDate();
-
-  let startDayOfWeek = firstDayOfMonth.getDay(); // 0=Sun, 1=Mon...
-  startDayOfWeek = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1; // 0=Mon, 1=Tue... 6=Sun
-  
-  const lastDayOfPrevMonth = new Date(year, month, 0);
-  const daysInPrevMonth = lastDayOfPrevMonth.getDate();
-
-  const grid: CalendarDay[] = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Days from previous month
-  for (let i = 0; i < startDayOfWeek; i++) {
-    const day = daysInPrevMonth - startDayOfWeek + 1 + i;
-    const d = new Date(year, month - 1, day);
-    grid.push(createCalendarDay(d, day, false, today));
-  }
-
-  // Days from current month
-  for (let i = 1; i <= daysInMonth; i++) {
-    const d = new Date(year, month, i);
-    grid.push(createCalendarDay(d, i, true, today));
-  }
-
-  // Days from next month - fill up to 42 cells (6 weeks)
-  for (let i = 1; grid.length < 42; i++) {
-    const d = new Date(year, month + 1, i);
-    grid.push(createCalendarDay(d, i, false, today));
-  }
-  
-  return grid;
+  return generateCalendarGrid(
+    year,
+    month,
+    selectedDate.value,
+    minDateParsed.value,
+    maxDateParsed.value,
+    props.disabledDates
+  );
 });
-
-const createCalendarDay = (
-  date: Date, 
-  dayOfMonth: number, 
-  isCurrentMonth: boolean, 
-  today: Date
-): CalendarDay => {
-  date.setHours(0, 0, 0, 0);
-  const selDate = selectedDate.value;
-  return {
-    date,
-    dayOfMonth,
-    isCurrentMonth,
-    isToday: date.getTime() === today.getTime(),
-    isSelected: selDate ? date.getTime() === selDate.getTime() : false
-  };
-};
 
 const previousMonth = () => {
   const newDate = new Date(displayedDate.value);
@@ -191,13 +149,61 @@ const nextMonth = () => {
   displayedDate.value = newDate;
 };
 
-const selectDate = (day: CalendarDay) => {
-  if (!day.isCurrentMonth) {
-    displayedDate.value = day.date;
+const selectDate = (date: Date) => {
+  try {
+    const normalized = normalizeDate(date);
+    const lang = currentLanguage.value as Language;
+    
+    // Проверка на отключённые даты
+    if (minDateParsed.value && normalized < minDateParsed.value) {
+      throw new Error(translations[lang].errorDateBeforeMin);
+    }
+    if (maxDateParsed.value && normalized > maxDateParsed.value) {
+      throw new Error(translations[lang].errorDateAfterMax);
+    }
+    if (props.disabledDates) {
+      const dateString = normalized.toISOString().split('T')[0];
+      if (props.disabledDates.includes(dateString)) {
+        throw new Error(translations[lang].errorDateDisabled);
+      }
+    }
+
+    // Если выбран день из другого месяца, переключаем отображаемый месяц
+    if (normalized.getMonth() !== displayedDate.value.getMonth() ||
+        normalized.getFullYear() !== displayedDate.value.getFullYear()) {
+      displayedDate.value = new Date(normalized);
+    }
+    
+    selectedDate.value = normalized;
+    emit('dateSelected', normalized);
+    error.value = null;
+  } catch (err) {
+    const lang = currentLanguage.value as Language;
+    error.value = err instanceof Error ? err : new Error(translations[lang].errorFailedToSelect);
+    emit('error', error.value);
   }
-  selectedDate.value = day.date;
-  emit('dateSelected', day.date);
 };
+
+// Локализованные метки для accessibility
+const calendarLabel = computed(() => {
+  const lang = currentLanguage.value as Language;
+  return translations[lang].title;
+});
+
+const calendarGridLabel = computed(() => {
+  const lang = currentLanguage.value as Language;
+  return `${translations[lang].title} - ${monthYearLabel.value}`;
+});
+
+const previousMonthLabel = computed(() => {
+  const lang = currentLanguage.value as Language;
+  return translations[lang].previousMonthLabel;
+});
+
+const nextMonthLabel = computed(() => {
+  const lang = currentLanguage.value as Language;
+  return translations[lang].nextMonthLabel;
+});
 
 // Следить за изменениями языка из props
 watch(() => props.language, (newLang: Language | undefined) => {
@@ -214,5 +220,47 @@ onMounted(() => {
 watch(() => props.initialDate, () => {
   initializeDate();
 });
-</script>
 
+// Keyboard navigation
+const handleKeydown = (event: KeyboardEvent) => {
+  switch (event.key) {
+    case 'ArrowLeft':
+      event.preventDefault();
+      previousMonth();
+      break;
+    case 'ArrowRight':
+      event.preventDefault();
+      nextMonth();
+      break;
+    case 'Home':
+      event.preventDefault();
+      // Переход к первому дню месяца
+      if (selectedDate.value) {
+        const firstDay = new Date(displayedDate.value.getFullYear(), displayedDate.value.getMonth(), 1);
+        selectDate(firstDay);
+      }
+      break;
+    case 'End':
+      event.preventDefault();
+      // Переход к последнему дню месяца
+      if (selectedDate.value) {
+        const lastDay = new Date(displayedDate.value.getFullYear(), displayedDate.value.getMonth() + 1, 0);
+        selectDate(lastDay);
+      }
+      break;
+  }
+};
+
+// Валидация props при изменении
+watch([() => props.minDate, () => props.maxDate], ([min, max]) => {
+  if (min && max) {
+    const minDate = parseDate(min);
+    const maxDate = parseDate(max);
+    if (minDate && maxDate && minDate > maxDate) {
+      const lang = currentLanguage.value as Language;
+      error.value = new Error(translations[lang].errorMinDateAfterMax);
+      emit('error', error.value);
+    }
+  }
+});
+</script>
